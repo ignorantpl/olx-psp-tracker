@@ -1,0 +1,28 @@
+name: OLX PSP Tracker
+on:
+  schedule:
+    # Run every 5 minutes (uses UTC)
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  track-psp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 price-parser lxml
+
+      - name: Run OLX Tracker
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python olx_psp_tracker.py
