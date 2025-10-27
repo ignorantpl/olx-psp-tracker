@@ -1,0 +1,135 @@
+import requests
+from bs4 import BeautifulSoup
+from price_parser import Price
+import time
+import re
+import os
+from datetime import datetime
+
+# Telegram configuration from environment variables
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+# Price configuration
+TARGET_PRICE = 150
+
+def send_telegram_alert(item):
+    """Send alert to Telegram"""
+    message = f"🚨 CHEAP PSP FOUND! 🚨\n\n"
+    message += f"🎮 {item['title']}\n"
+    message += f"💰 Price: {item['price']} zł\n"
+    message += f"🔗 {item['link']}"
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {
+        'chat_id': TELEGRAM_CHAT_ID,
+        'text': message
+    }
+
+    try:
+        response = requests.post(url, data=data)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+def is_actual_psp_console(title):
+    """Check if the item is an actual PSP console"""
+    if not title:
+        return False
+
+    title_lower = title.lower()
+
+    console_keywords = [
+        'psp-1000', 'psp-1001', 'psp-1004', 'psp-2000', 'psp-2001', 'psp-2004',
+        'psp-3000', 'psp-3001', 'psp-3004', 'psp-3006', 'psp street', 'psp e1000',
+        'psp fat', 'psp slim', 'psp go', 'konsola psp', 'console psp', 'psp console'
+    ]
+
+    exclude_keywords = [
+        'gra', 'gry', 'game', 'games', 'battle', 'pacific', 'okładka',
+        'cover', 'pudełko', 'box', 'akcesoria', 'accessories', 'ładowarka',
+        'charger', 'bateria', 'battery', 'etui', 'case'
+    ]
+
+    is_console = any(keyword in title_lower for keyword in console_keywords)
+    is_not_console = any(keyword in title_lower for keyword in exclude_keywords)
+    psp_model_pattern = r'psp[\s-]?\d{4}'
+    has_psp_model = re.search(psp_model_pattern, title_lower)
+
+    return (is_console or has_psp_model) and not is_not_console
+
+def scrape_psp_olx():
+    """Scrapes OLX for PSP consoles"""
+    url = "https://www.olx.pl/oferty/q-psp/"
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(response.content, 'html.parser')
+        items_found = soup.find_all('div', {'data-cy': 'l-card'})
+        psp_items = []
+
+        for item in items_found:
+            try:
+                title_element = item.find('h6')
+                title = title_element.text.strip() if title_element else ""
+
+                if not title or not is_actual_psp_console(title):
+                    continue
+
+                price_element = item.find('p', {'data-testid': 'ad-price'})
+                price_text = price_element.text.strip() if price_element else ""
+                price = Price.fromstring(price_text).amount_float
+
+                link_element = item.find('a')
+                link = ""
+                if link_element and link_element.get('href'):
+                    link = link_element['href']
+                    if link.startswith('/'): 
+                        link = 'https://www.olx.pl' + link
+
+                if title and price:
+                    psp_items.append({
+                        'title': title,
+                        'price': price,
+                        'link': link
+                    })
+
+            except Exception:
+                continue
+
+        return psp_items
+
+    except Exception as e:
+        print(f"Error scraping OLX: {e}")
+        return []
+
+def main():
+    """Main function"""
+    print("🎮 OLX PSP Tracker - Starting...")
+    print(f"💰 Target price: {TARGET_PRICE} zł")
+    
+    # Check if Telegram config is set
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("❌ Telegram credentials not set!")
+        return
+
+    psp_items = scrape_psp_olx()
+    affordable_count = 0
+
+    for item in psp_items:
+        if item['price'] and item['price'] <= TARGET_PRICE:
+            if send_telegram_alert(item):
+                affordable_count += 1
+                print(f"✅ Alert sent: {item['title']} - {item['price']} zł")
+
+    print(f"📊 Scan complete. Found {affordable_count} affordable PSP consoles.")
+
+if __name__ == "__main__":
+    main()
